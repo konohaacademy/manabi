@@ -29,6 +29,12 @@
     ⚠ 受けるのは Google の枠（*-script.googleusercontent.com）からで、しかもこのページの中の枠からだけ。
       中の側も送る相手をこのページの origin に縛っている（よそのページに入れられてもトークンは出ない）。
 
+  ■ 通知（2026-10-17。sw.js・push-worker/・juken-plan/Push.gs）
+    中 → ここ  { jp: 'who', who }       いまログインしている人（ログインID。講師は頭に T:）。空ならログアウト
+    ここ → 中  { jp: 'push', sub }      この端末の通知の宛先。中が受験プランに登録する（同じものは送り直さない）
+    ここ → 中  { jp: 'go', go }         通知を押して開いたとき、開くタブ
+    ・通知を許可するかを聞くのは、このページの帯のボタンから（iPhone は押したその場でないと聞けない。枠の中からは聞けない）
+    ・iPhone は「ホーム画面に追加」して開いたときだけ通知が届く。Safari で開いているときは、その手順を帯で出す
   ⚠ このページ自体には個人情報も問題も載っていない。中身は全部ログインの向こう。
   ⚠ konohaacademy.github.io はほかのリポジトリのページ（todai-roadmap）と保存を共有する。だから預かるものは頭に mt: を付ける。
   ⚠ ウェブアプリのURLを変えたら（新しいIDで deploy したら）下の APP も変える。いつもは同じIDへ版を上げるだけなので変わらない。
@@ -40,10 +46,19 @@
           font: 14px/1.6 -apple-system, "Hiragino Sans", sans-serif; color: #1B1F24; background: #fff;
           border: 1px solid #E3E6EB; border-radius: 12px; padding: 12px 14px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
   #slow a { color: #1A237E; font-weight: 700; }
+  #bar { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); display: none; z-index: 5;
+         font: 14px/1.6 -apple-system, "Hiragino Sans", sans-serif; color: #1B1F24; background: #fff;
+         border: 1px solid #C5CAE9; border-radius: 14px; padding: 12px 14px; box-shadow: 0 4px 18px rgba(26,35,126,.18); }
+  #bar > b { display: block; margin-bottom: 2px; }
+  #bar .b { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
+  #bar button { font: inherit; border-radius: 10px; padding: 7px 14px; border: 1px solid #C5CAE9; background: #fff; color: #1A237E; }
+  #bar button.go { background: #1A237E; color: #fff; border-color: #1A237E; font-weight: 700; }
+  #bar .ios { font-size: 13px; color: #444; }
 </style>
 </head>
 <body>
 <iframe id="app" title="まなびのテラス" allow="clipboard-write; fullscreen"></iframe>
+<div id="bar" role="dialog" aria-live="polite"></div>
 <div id="slow">ひらくのに時間がかかっています。うまく出ないときは
   <a id="direct" target="_top">こちらから開いてください</a>（この場合は毎回ログインが要ります）。</div>
 <script>
@@ -53,6 +68,11 @@ var NS = 'mt:';                                  // このページの保存の�
 var GAS_ORIGIN = /^https:\/\/[a-z0-9-]+-script\.googleusercontent\.com$/;
 var frame = document.getElementById('app');
 var hello = false;
+var inner = null;                                // 中の画面（hello をくれた枠）
+var who = '';                                    // いまログインしている人（中が教えてくれる）
+// 通知の公開鍵（push-worker の VAPID。公開してよいもの）。⚠ 変えると登録済みの端末に届かなくなる
+var VAPID_PUBLIC = 'BMeubbb4RQuEEMUWBeC08MYKWdDSW6ztpVmiRjoY-O5vhVnrlvdWWzaQvSZH6rH6L0E4qDDveUjYCqwgzfKGMgA';
+var UI = 'mtw:';                                 // このページだけの覚え（中へは渡さない）
 
 function ls() { try { return window.localStorage; } catch (e) { return null; } }
 function all() {
@@ -86,10 +106,86 @@ window.addEventListener('message', function (e) {
   if (d.jp === 'hello') {
     hello = true;
     document.getElementById('slow').style.display = 'none';
+    inner = { win: e.source, origin: e.origin };
     e.source.postMessage({ jp: 'store', items: all() }, e.origin);
+    if (goWant) toInner({ jp: 'go', go: goWant });
   } else if (d.jp === 'set' && typeof d.k === 'string') put(d.k, String(d.v));
   else if (d.jp === 'del' && typeof d.k === 'string') del(d.k);
+  else if (d.jp === 'who') { who = typeof d.who === 'string' ? d.who : ''; pushCheck(); }
 });
+
+function toInner(m) { if (inner) try { inner.win.postMessage(m, inner.origin); } catch (e) {} }
+
+// ── 通知 ──────────────────────────────────────
+// 通知を押して開いたときのタブ（#go=week）。sw.js が開いたページへは、中の画面ができてから渡す
+var goWant = (/[#&]go=([A-Za-z]{1,20})/.exec(location.hash) || [])[1] || '';
+if (goWant) try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+
+var pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+var standalone = window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+var swReg = null;
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').then(function (r) { swReg = r; pushCheck(); }).catch(function () {});
+  navigator.serviceWorker.addEventListener('message', function (e) {
+    var d = e.data || {};
+    if (d.mt === 'go' && /^[A-Za-z]{1,20}$/.test(d.go || '')) toInner({ jp: 'go', go: d.go });
+  });
+}
+
+function uiGet(k) { var s = ls(); try { return s ? s.getItem(UI + k) : null; } catch (e) { return null; } }
+function uiSet(k, v) { var s = ls(); try { if (s) s.setItem(UI + k, v); } catch (e) {} }
+function snoozed(k) { var t = Number(uiGet(k) || 0); return t && Date.now() < t; }
+function snooze(k, days) { uiSet(k, String(Date.now() + days * 86400000)); hideBar(); }
+
+function hideBar() { document.getElementById('bar').style.display = 'none'; }
+function showBar(html) { var b = document.getElementById('bar'); b.innerHTML = html; b.style.display = 'block'; }
+
+/** ログインした人がいるときに、通知の様子を見て帯を出すか、黙って宛先を中へ渡す。 */
+function pushCheck() {
+  if (!who) { hideBar(); return; }
+  // iPhone の Safari（ホーム画面から開いていない）は通知が届かない。追加の手順を出す
+  if (isIOS && !standalone) {
+    if (snoozed('a2hs')) return;
+    showBar('<b>📲 ホーム画面に追加しよう</b><div class="ios">下の <b>共有ボタン（□に↑）</b> →「<b>ホーム画面に追加</b>」。' +
+      'アイコンから開くと、ログインしたままになり、<b>通知</b>も届くようになります。</div>' +
+      '<div class="b"><button type="button" onclick="snooze(\'a2hs\', 7)">あとで</button></div>');
+    return;
+  }
+  if (!pushOk || !swReg) return;
+  if (Notification.permission === 'granted') { subscribe(false); return; }
+  if (Notification.permission === 'denied' || snoozed('ask')) return;
+  showBar('<b>🔔 通知を受け取りませんか？</b><div class="ios">' +
+    (who.indexOf('T:') === 0 ? '生徒のチェック・写真・過去問のふり返りが届いたときにお知らせします。'
+                                   : '新しい課題が出たとき・ランキングに入ったときなどにお知らせします。') +
+    '</div><div class="b"><button type="button" onclick="snooze(\'ask\', 3)">あとで</button>' +
+    '<button type="button" class="go" onclick="askPush()">受け取る</button></div>');
+}
+
+/** 帯のボタンから（⚠ 押したその場で聞く。iPhone は待ってからだと聞けない） */
+function askPush() {
+  hideBar();
+  var p;
+  try { p = Notification.requestPermission(); } catch (e) { return; }
+  Promise.resolve(p).then(function (r) { if (r === 'granted') subscribe(true); });
+}
+
+function subscribe(fresh) {
+  if (!swReg) return;
+  swReg.pushManager.getSubscription().then(function (s) {
+    return s || swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(VAPID_PUBLIC) });
+  }).then(function (s) {
+    if (s) toInner({ jp: 'push', sub: s.toJSON(), fresh: !!fresh });
+  }).catch(function () {});
+}
+
+function b64u(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  var bin = atob(s), out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 frame.src = APP + '?wrap=1';
 document.getElementById('direct').href = APP;
