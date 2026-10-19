@@ -35,7 +35,10 @@
                                         role … 生徒のIDで入った端末を使うのが「本人」か「保護者」か（帯で選ぶ。2026-10-19）
     ここ → 中  { jp: 'go', go, who, at, reply }  通知を押して開いたとき、開くタブ（講師へは、どの生徒のどこか。
                                         保護者へは、どの子の知らせか＝中がその子に切り替える。きょうだい・2026-10-19）
-    ・通知を許可するかを聞くのは、このページの帯のボタンから（iPhone は押したその場でないと聞けない。枠の中からは聞けない）
+    ・通知を許可するかを聞くのは、このページのボタンから（iPhone は押したその場でないと聞けない。枠の中からは聞けない）
+    ・通知は「オンが基本」（2026-10-19・塾長）。ログインして、まだ許可も拒否もしていなければ、画面いっぱいの
+      「🔔 通知をオンにする」を毎回出す（「今はしない」はその回だけ）。⚠ 端末の設定でオフにした（拒否した）人には
+      もう出さない（オフにするのは本人の判断）。⚠ OS の許可の画面を出さずにオンにする方法は無い（ボタン1回は要る）。
     ・iPhone は「ホーム画面に追加」して開いたときだけ通知が届く。Safari で開いているときは、その手順を帯で出す
   ⚠ このページ自体には個人情報も問題も載っていない。中身は全部ログインの向こう。
   ⚠ konohaacademy.github.io はほかのリポジトリのページ（todai-roadmap）と保存を共有する。だから預かるものは頭に mt: を付ける。
@@ -56,11 +59,24 @@
   #bar button { font: inherit; border-radius: 10px; padding: 7px 14px; border: 1px solid #C5CAE9; background: #fff; color: #1A237E; }
   #bar button.go { background: #1A237E; color: #fff; border-color: #1A237E; font-weight: 700; }
   #bar .ios { font-size: 13px; color: #444; }
+  /* 通知をオンにする画面（2026-10-19。帯だと見落とされたので、ログインしたら画面いっぱいに出す） */
+  #ask { position: fixed; inset: 0; z-index: 10; display: none; align-items: center; justify-content: center;
+         background: rgba(15,20,60,.55); padding: 16px; box-sizing: border-box;
+         font: 15px/1.7 -apple-system, "Hiragino Sans", sans-serif; color: #1B1F24; }
+  #ask .c { background: #fff; border-radius: 18px; padding: 22px 18px 16px; max-width: 420px; width: 100%;
+            box-shadow: 0 10px 40px rgba(0,0,0,.25); text-align: center; }
+  #ask .t { font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+  #ask .d { font-size: 13.5px; color: #444; text-align: left; margin: 8px 0 14px; }
+  #ask button.go { display: block; width: 100%; font: inherit; font-size: 17px; font-weight: 800; color: #fff;
+                   background: #1A237E; border: 0; border-radius: 12px; padding: 13px 10px; margin-top: 10px; }
+  #ask button.go.p { background: #00695C; }
+  #ask button.no { font: inherit; font-size: 13px; color: #666; background: none; border: 0; margin-top: 12px; padding: 6px; }
 </style>
 </head>
 <body>
 <iframe id="app" title="まなびのテラス" allow="clipboard-write; fullscreen"></iframe>
 <div id="bar" role="dialog" aria-live="polite"></div>
+<div id="ask" role="dialog" aria-modal="true"><div class="c" id="askc"></div></div>
 <div id="slow">ひらくのに時間がかかっています。うまく出ないときは
   <a id="direct" target="_top">こちらから開いてください</a>（この場合は毎回ログインが要ります）。</div>
 <script>
@@ -156,40 +172,54 @@ function snooze(k, days) { uiSet(k, String(Date.now() + days * 86400000)); hideB
 function hideBar() { document.getElementById('bar').style.display = 'none'; }
 function showBar(html) { var b = document.getElementById('bar'); b.innerHTML = html; b.style.display = 'block'; }
 
-/** ログインした人がいるときに、通知の様子を見て帯を出すか、黙って宛先を中へ渡す。 */
+var askLater = false;                            // 「今はしない」（この回だけ。次に開いたらまた出す）
+function hideAsk() { document.getElementById('ask').style.display = 'none'; }
+function showAsk(html) { document.getElementById('askc').innerHTML = html; document.getElementById('ask').style.display = 'flex'; }
+
+/** ログインした人がいるときに、通知の様子を見て「通知をオンにする」を出すか、黙って宛先を中へ渡す。 */
 function pushCheck() {
-  if (!who) { hideBar(); return; }
+  if (!who) { hideBar(); hideAsk(); return; }
   // iPhone の Safari（ホーム画面から開いていない）は通知が届かない。追加の手順を出す
   if (isIOS && !standalone) {
     if (snoozed('a2hs')) return;
     showBar('<b>📲 ホーム画面に追加しよう</b><div class="ios">下の <b>共有ボタン（□に↑）</b> →「<b>ホーム画面に追加</b>」。' +
       'アイコンから開くと、ログインしたままになり、<b>通知</b>も届くようになります。</div>' +
-      '<div class="b"><button type="button" onclick="snooze(\'a2hs\', 7)">あとで</button></div>');
+      '<div class="b"><button type="button" onclick="snooze(\'a2hs\', 1)">あとで</button></div>');
     return;
   }
-  if (!pushOk || !swReg) return;
-  if (Notification.permission === 'granted') { subscribe(false); return; }
-  if (Notification.permission === 'denied' || snoozed('ask')) return;
+  // ⚠ ホーム画面から開いているのに通知のしくみが無い＝iOS が古い（16.4 より前）。黙っていると「案内が出ない」になる
+  if (!pushOk) {
+    if (isIOS && !snoozed('old')) {
+      showBar('<b>🔔 このiPhoneでは通知が使えません</b><div class="ios">iOS 16.4 以降で届くようになります。' +
+        '「設定」→「一般」→「ソフトウェアアップデート」から更新してください。</div>' +
+        '<div class="b"><button type="button" onclick="snooze(\'old\', 7)">閉じる</button></div>');
+    }
+    return;
+  }
+  if (!swReg) return;                            // 準備ができたらもう一度呼ばれる
+  if (Notification.permission === 'granted') { hideAsk(); subscribe(false); return; }
+  if (Notification.permission === 'denied' || askLater) return;   // オフにしたのは本人の判断
   if (who.indexOf('T:') === 0) {
-    showBar('<b>🔔 通知を受け取りませんか？</b><div class="ios">生徒のチェック・写真・過去問のふり返りが届いたときにお知らせします。' +
-      '通知から、ひとことを送ったり、その課題のところへすぐ飛べます。</div>' +
-      '<div class="b"><button type="button" onclick="snooze(\'ask\', 3)">あとで</button>' +
-      '<button type="button" class="go" onclick="askPush(\'\')">受け取る</button></div>');
+    showAsk('<div class="t">🔔 通知をオンにする</div>' +
+      '<div class="d">生徒のチェック・写真・過去問のふり返りが届いたときにお知らせします。通知から、ひとことを送ったり、その課題のところへすぐ飛べます。</div>' +
+      '<button type="button" class="go" onclick="askPush(\'\')">通知をオンにする</button>' +
+      '<button type="button" class="no" onclick="askNo()">今はしない</button>');
     return;
   }
   // 生徒のIDで入った端末は、本人か保護者かを選んでもらう（保護者には取り組みの知らせ・今日のようすが届く）
-  showBar('<b>🔔 通知を受け取りませんか？</b><div class="ios">この端末を使うのは？<br>' +
-    '・<b>本人</b>：新しい課題・今日やること・ランキングなどをお知らせします。<br>' +
-    '・<b>保護者の方</b>：課題のチェックや写真を送ったとき・毎晩の「今日のようす」・先生からのひとことをお知らせします。' +
-    'きょうだいで通っているときは、あとで画面の上の <b>👪</b> から追加すると、どのお子さんの通知もこの端末に届きます。</div>' +
-    '<div class="b"><button type="button" onclick="snooze(\'ask\', 3)">あとで</button>' +
-    '<button type="button" class="go" onclick="askPush(\'parent\')">保護者の方</button>' +
-    '<button type="button" class="go" onclick="askPush(\'student\')">本人</button></div>');
+  showAsk('<div class="t">🔔 通知をオンにしてください</div>' +
+    '<div class="d">このスマホを使うのはどなたですか？ 押すと「通知を許可しますか？」と出るので「<b>許可</b>」を押してください。<br>' +
+    '・<b>生徒本人</b>：新しい課題・今日やること・ランキングなど<br>' +
+    '・<b>保護者の方</b>：課題のチェックや写真を送ったとき・毎晩の「今日のようす」・先生からのひとこと</div>' +
+    '<button type="button" class="go" onclick="askPush(\'student\')">生徒本人です</button>' +
+    '<button type="button" class="go p" onclick="askPush(\'parent\')">保護者です</button>' +
+    '<button type="button" class="no" onclick="askNo()">今はしない</button>');
 }
+function askNo() { askLater = true; hideAsk(); }
 
-/** 帯のボタンから（⚠ 押したその場で聞く。iPhone は待ってからだと聞けない） */
+/** ボタンから（⚠ 押したその場で聞く。iPhone は待ってからだと聞けない） */
 function askPush(role) {
-  hideBar();
+  hideAsk();
   if (role) uiSet('role', role);
   var p;
   try { p = Notification.requestPermission(); } catch (e) { return; }
@@ -203,7 +233,13 @@ function subscribe(fresh) {
   }).then(function (s) {
     // role は帯で選んだもの。⚠ 中の画面で切り替えたあとは、中の覚え（jp:devrole）が優先（fresh のときだけこちら）
     if (s) toInner({ jp: 'push', sub: s.toJSON(), fresh: !!fresh, role: uiGet('role') || '' });
-  }).catch(function () {});
+  }).catch(function () {
+    // ⚠ 許可したのに宛先が作れなかった。黙っていると「オンにしたのに届かない」になる
+    if (!fresh) return;
+    showBar('<b>🔔 通知の準備がうまくいきませんでした</b><div class="ios">電波のよいところで、もう一度押してください。</div>' +
+      '<div class="b"><button type="button" onclick="hideBar()">閉じる</button>' +
+      '<button type="button" class="go" onclick="hideBar(); subscribe(true)">もう一度</button></div>');
+  });
 }
 
 function b64u(s) {
