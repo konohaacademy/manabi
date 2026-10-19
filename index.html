@@ -31,8 +31,9 @@
 
   ■ 通知（2026-10-17。sw.js・push-worker/・juken-plan/Push.gs）
     中 → ここ  { jp: 'who', who }       いまログインしている人（ログインID。講師は頭に T:）。空ならログアウト
-    ここ → 中  { jp: 'push', sub }      この端末の通知の宛先。中が受験プランに登録する（同じものは送り直さない）
-    ここ → 中  { jp: 'go', go }         通知を押して開いたとき、開くタブ
+    ここ → 中  { jp: 'push', sub, role, fresh }  この端末の通知の宛先。中が受験プランに登録する（同じものは送り直さない）
+                                        role … 生徒のIDで入った端末を使うのが「本人」か「保護者」か（帯で選ぶ。2026-10-19）
+    ここ → 中  { jp: 'go', go, who, at, reply }  通知を押して開いたとき、開くタブ（講師へは、どの生徒のどこか）
     ・通知を許可するかを聞くのは、このページの帯のボタンから（iPhone は押したその場でないと聞けない。枠の中からは聞けない）
     ・iPhone は「ホーム画面に追加」して開いたときだけ通知が届く。Safari で開いているときは、その手順を帯で出す
   ⚠ このページ自体には個人情報も問題も載っていない。中身は全部ログインの向こう。
@@ -108,7 +109,7 @@ window.addEventListener('message', function (e) {
     document.getElementById('slow').style.display = 'none';
     inner = { win: e.source, origin: e.origin };
     e.source.postMessage({ jp: 'store', items: all() }, e.origin);
-    if (goWant) toInner({ jp: 'go', go: goWant });
+    if (goWant) toInner(goWant);
   } else if (d.jp === 'set' && typeof d.k === 'string') put(d.k, String(d.v));
   else if (d.jp === 'del' && typeof d.k === 'string') del(d.k);
   else if (d.jp === 'who') { who = typeof d.who === 'string' ? d.who : ''; pushCheck(); }
@@ -117,9 +118,22 @@ window.addEventListener('message', function (e) {
 function toInner(m) { if (inner) try { inner.win.postMessage(m, inner.origin); } catch (e) {} }
 
 // ── 通知 ──────────────────────────────────────
-// 通知を押して開いたときのタブ（#go=week）。sw.js が開いたページへは、中の画面ができてから渡す
-var goWant = (/[#&]go=([A-Za-z]{1,20})/.exec(location.hash) || [])[1] || '';
+// 通知を押して開いたときのタブ（#go=week&who=…&at=…）。sw.js が開いたページへは、中の画面ができてから渡す
+var goWant = goFrom(location.hash);
 if (goWant) try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+function goFrom(hash) {
+  var m = {};
+  String(hash || '').replace(/^#/, '').split('&').forEach(function (kv) {
+    var i = kv.indexOf('=');
+    if (i > 0) try { m[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) {}
+  });
+  if (!/^[A-Za-z]{1,20}$/.test(m.go || '')) return null;
+  return goMsg(m);
+}
+function goMsg(m) {
+  return { jp: 'go', go: m.go, who: /^[A-Za-z0-9._-]{1,40}$/.test(m.who || '') ? m.who : '',
+           at: typeof m.at === 'string' ? m.at.slice(0, 300) : '', reply: m.reply ? 1 : 0 };
+}
 
 var pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -129,7 +143,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').then(function (r) { swReg = r; pushCheck(); }).catch(function () {});
   navigator.serviceWorker.addEventListener('message', function (e) {
     var d = e.data || {};
-    if (d.mt === 'go' && /^[A-Za-z]{1,20}$/.test(d.go || '')) toInner({ jp: 'go', go: d.go });
+    if (d.mt === 'go' && /^[A-Za-z]{1,20}$/.test(d.go || '')) toInner(goMsg(d));
   });
 }
 
@@ -155,16 +169,26 @@ function pushCheck() {
   if (!pushOk || !swReg) return;
   if (Notification.permission === 'granted') { subscribe(false); return; }
   if (Notification.permission === 'denied' || snoozed('ask')) return;
-  showBar('<b>🔔 通知を受け取りませんか？</b><div class="ios">' +
-    (who.indexOf('T:') === 0 ? '生徒のチェック・写真・過去問のふり返りが届いたときにお知らせします。'
-                                   : '新しい課題が出たとき・ランキングに入ったときなどにお知らせします。') +
-    '</div><div class="b"><button type="button" onclick="snooze(\'ask\', 3)">あとで</button>' +
-    '<button type="button" class="go" onclick="askPush()">受け取る</button></div>');
+  if (who.indexOf('T:') === 0) {
+    showBar('<b>🔔 通知を受け取りませんか？</b><div class="ios">生徒のチェック・写真・過去問のふり返りが届いたときにお知らせします。' +
+      '通知から、ひとことを送ったり、その課題のところへすぐ飛べます。</div>' +
+      '<div class="b"><button type="button" onclick="snooze(\'ask\', 3)">あとで</button>' +
+      '<button type="button" class="go" onclick="askPush(\'\')">受け取る</button></div>');
+    return;
+  }
+  // 生徒のIDで入った端末は、本人か保護者かを選んでもらう（保護者には取り組みの知らせ・今日のようすが届く）
+  showBar('<b>🔔 通知を受け取りませんか？</b><div class="ios">この端末を使うのは？<br>' +
+    '・<b>本人</b>：新しい課題・今日やること・ランキングなどをお知らせします。<br>' +
+    '・<b>保護者の方</b>：課題のチェックや写真を送ったとき・毎晩の「今日のようす」・先生からのひとことをお知らせします。</div>' +
+    '<div class="b"><button type="button" onclick="snooze(\'ask\', 3)">あとで</button>' +
+    '<button type="button" class="go" onclick="askPush(\'parent\')">保護者の方</button>' +
+    '<button type="button" class="go" onclick="askPush(\'student\')">本人</button></div>');
 }
 
 /** 帯のボタンから（⚠ 押したその場で聞く。iPhone は待ってからだと聞けない） */
-function askPush() {
+function askPush(role) {
   hideBar();
+  if (role) uiSet('role', role);
   var p;
   try { p = Notification.requestPermission(); } catch (e) { return; }
   Promise.resolve(p).then(function (r) { if (r === 'granted') subscribe(true); });
@@ -175,7 +199,8 @@ function subscribe(fresh) {
   swReg.pushManager.getSubscription().then(function (s) {
     return s || swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(VAPID_PUBLIC) });
   }).then(function (s) {
-    if (s) toInner({ jp: 'push', sub: s.toJSON(), fresh: !!fresh });
+    // role は帯で選んだもの。⚠ 中の画面で切り替えたあとは、中の覚え（jp:devrole）が優先（fresh のときだけこちら）
+    if (s) toInner({ jp: 'push', sub: s.toJSON(), fresh: !!fresh, role: uiGet('role') || '' });
   }).catch(function () {});
 }
 
