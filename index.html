@@ -77,8 +77,10 @@
 <iframe id="app" title="まなびのテラス" allow="clipboard-write; fullscreen"></iframe>
 <div id="bar" role="dialog" aria-live="polite"></div>
 <div id="ask" role="dialog" aria-modal="true"><div class="c" id="askc"></div></div>
-<div id="slow">ひらくのに時間がかかっています。うまく出ないときは
-  <a id="direct" target="_top">こちらから開いてください</a>（この場合は毎回ログインが要ります）。</div>
+<div id="slow"><b>ひらくのに時間がかかっています</b><br>電波のよいところで「もう一度読み込む」を押してください。
+  <div style="margin-top:8px"><button type="button" id="reload" style="font:inherit;font-weight:700;color:#fff;background:#1A237E;border:0;border-radius:10px;padding:8px 16px">もう一度読み込む</button></div>
+  <div id="direct-w" style="display:none;margin-top:10px;font-size:12px;color:#666">何度やっても開かないときだけ：<a id="direct" target="_top">Google の画面で直接開く</a>
+  （この開き方では通知が届かず、毎回ログインが要ります。ホーム画面には追加しないでください）</div></div>
 <script>
 'use strict';
 var APP = 'https://script.google.com/macros/s/AKfycbxf6zCLhxA37h8j6bH7dbJKCdvdZDpEYMCxLGI_uE8UwHg_JSR0yne5YPBRUfNXuSB8bw/exec';
@@ -251,9 +253,20 @@ function b64u(s) {
 }
 
 frame.src = APP + '?wrap=1';
-document.getElementById('direct').href = APP;
-// 20秒たっても中から声がかからなければ、直接ひらく道を出す（Google 側の都合で枠に入らない日のため）
-setTimeout(function () { if (!hello) document.getElementById('slow').style.display = 'block'; }, 20000);
+// ⚠ 直接ひらく道（?direct=1）は、入口へ戻す案内を出さない。以前は20秒で「こちらから開いて」を出しており、
+//   押した人がそのページをホーム画面に追加すると、通知の届かない古い入口になった（2026-10-19）。
+//   まずは読み込み直しを出し、直接ひらく道は45秒たってから小さく出す。
+document.getElementById('direct').href = APP + '?direct=1';
+document.getElementById('reload').onclick = function () {
+  document.getElementById('slow').style.display = 'none';
+  frame.src = APP + '?wrap=1&r=' + Date.now();
+  slowTimers();
+};
+function slowTimers() {
+  setTimeout(function () { if (!hello) document.getElementById('slow').style.display = 'block'; }, 20000);
+  setTimeout(function () { if (!hello) document.getElementById('direct-w').style.display = 'block'; }, 45000);
+}
+slowTimers();
 </script>
 </body>
 </html>
