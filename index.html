@@ -40,6 +40,13 @@
       「🔔 通知をオンにする」を毎回出す（「今はしない」はその回だけ）。⚠ 端末の設定でオフにした（拒否した）人には
       もう出さない（オフにするのは本人の判断）。⚠ OS の許可の画面を出さずにオンにする方法は無い（ボタン1回は要る）。
     ・iPhone は「ホーム画面に追加」して開いたときだけ通知が届く。Safari で開いているときは、その手順を帯で出す
+  ■ ピアノの録音（2026-10-29。juken-plan/WebPiano.gs）
+    中 → ここ  { jp: 'pianoRec', id, title, score, max }   楽譜（縮小画像のURL）を出して録音して
+    ここ → 中  { jp: 'pianoRecDone', id, data, mime, sec } 録った音（base64）。中がいつもどおり送る
+               { jp: 'pianoRecCancel', id } / { jp: 'pianoRecErr', id, error }
+    ・⚠ 中の画面（Google の枠）はマイクを使えない（枠の allow に microphone が無い）。だから録音だけここでする。
+    ・録った音はこのページに残さない（中へ渡したら捨てる）。トークンもこのページは持たない。
+    ・store に caps: ['piano'] を添えて、ここが録音できる版だと中に知らせる（古い入口には無い）。
   ⚠ このページ自体には個人情報も問題も載っていない。中身は全部ログインの向こう。
   ⚠ konohaacademy.github.io はほかのリポジトリのページ（todai-roadmap）と保存を共有する。だから預かるものは頭に mt: を付ける。
   ⚠ ウェブアプリのURLを変えたら（新しいIDで deploy したら）下の APP も変える。いつもは同じIDへ版を上げるだけなので変わらない。
@@ -71,12 +78,45 @@
                    background: #1A237E; border: 0; border-radius: 12px; padding: 13px 10px; margin-top: 10px; }
   #ask button.go.p { background: #00695C; }
   #ask button.no { font: inherit; font-size: 13px; color: #666; background: none; border: 0; margin-top: 12px; padding: 6px; }
+  /* ピアノの録音（2026-10-29）。年長さんが1人で押せるよう、ボタンは大きく・字はひらがな */
+  #pr { position: fixed; inset: 0; z-index: 20; display: none; flex-direction: column; background: #FFF5F9;
+        font: 16px/1.5 "Hiragino Maru Gothic ProN", -apple-system, "Hiragino Sans", sans-serif; color: #22324A;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #pr .hd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+  #pr .hd b { flex: 1 1 auto; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pr .hd button { font: inherit; font-size: 15px; font-weight: 800; border: 1px solid #F3B3CC; background: #fff; color: #A61E4D;
+                   border-radius: 999px; padding: 6px 14px; }
+  #pr .sc { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0 10px; }
+  #pr .sc img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.1); }
+  #pr .sc .no { font-size: 90px; }
+  #pr .ft { padding: 12px 16px 18px; text-align: center; }
+  #pr .msg { font-size: 18px; font-weight: 800; min-height: 28px; }
+  #pr .tm { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; color: #E03131; }
+  #pr .lv { height: 10px; border-radius: 999px; background: #F1D2DE; overflow: hidden; margin: 6px auto 4px; max-width: 360px; }
+  #pr .lv i { display: block; height: 100%; width: 0; background: #F783AC; transition: width .08s; }
+  #pr .bt { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+  #pr .bt button { font: inherit; font-weight: 800; border: 0; border-radius: 22px; padding: 16px 22px; font-size: 20px; color: #fff; }
+  #pr .bt .rec { background: #E03131; box-shadow: 0 5px 0 #A51111; min-width: 220px; }
+  #pr .bt .stop { background: #343A40; box-shadow: 0 5px 0 #000; min-width: 220px; }
+  #pr .bt .ok { background: #2B8A3E; box-shadow: 0 5px 0 #1B5E20; }
+  #pr .bt .sub { background: #fff; color: #1E6FD9; border: 2px solid #1E6FD9; }
+  #pr .cd { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; font-size: 180px; font-weight: 900;
+            color: #E03131; background: rgba(255,245,249,.85); z-index: 21; }
+  #pr.on-rec .dot { display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: #E03131; margin-right: 6px;
+                    animation: prb 1s infinite; vertical-align: middle; }
+  @keyframes prb { 50% { opacity: .2 } }
 </style>
 </head>
 <body>
 <iframe id="app" title="まなびのテラス" allow="clipboard-write; fullscreen"></iframe>
 <div id="bar" role="dialog" aria-live="polite"></div>
 <div id="ask" role="dialog" aria-modal="true"><div class="c" id="askc"></div></div>
+<div id="pr" role="dialog" aria-modal="true">
+  <div class="hd"><b id="pr-t"></b><button type="button" id="pr-x">やめる</button></div>
+  <div class="sc" id="pr-sc"></div>
+  <div class="ft"><div class="msg" id="pr-msg"></div><div class="lv" id="pr-lv"><i></i></div><div class="bt" id="pr-bt"></div></div>
+  <div class="cd" id="pr-cd"></div>
+</div>
 <div id="slow"><b>ひらくのに時間がかかっています</b><br>電波のよいところで「もう一度読み込む」を押してください。
   <div style="margin-top:8px"><button type="button" id="reload" style="font:inherit;font-weight:700;color:#fff;background:#1A237E;border:0;border-radius:10px;padding:8px 16px">もう一度読み込む</button></div>
   <div id="direct-w" style="display:none;margin-top:10px;font-size:12px;color:#666">何度やっても開かないときだけ：<a id="direct" target="_top">Google の画面で直接開く</a>
@@ -127,11 +167,12 @@ window.addEventListener('message', function (e) {
     hello = true;
     document.getElementById('slow').style.display = 'none';
     inner = { win: e.source, origin: e.origin };
-    e.source.postMessage({ jp: 'store', items: all() }, e.origin);
+    e.source.postMessage({ jp: 'store', items: all(), caps: recCaps() }, e.origin);
     if (goWant) toInner(goWant);
   } else if (d.jp === 'set' && typeof d.k === 'string') put(d.k, String(d.v));
   else if (d.jp === 'del' && typeof d.k === 'string') del(d.k);
   else if (d.jp === 'who') { who = typeof d.who === 'string' ? d.who : ''; pushCheck(); }
+  else if (d.jp === 'pianoRec' && typeof d.id === 'string') prOpen(d);
 });
 
 function toInner(m) { if (inner) try { inner.win.postMessage(m, inner.origin); } catch (e) {} }
@@ -251,6 +292,181 @@ function b64u(s) {
   for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+
+// ── ピアノの録音（2026-10-29）──────────────────────
+//  中の画面に頼まれて、楽譜を出して録音する。録った音は中へ渡して、ここには残さない。
+//  ⚠ マイクを開くのは「ろくおん」を押したその場（iPad は押したときでないと許可を聞けない）。
+//  ⚠ 終わったらマイクを必ず閉じる（閉じないと iPad の上に録音中の印が出たままになる）。
+function recCaps() {
+  var ok = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  return ok ? ['piano'] : [];
+}
+var pr = null;
+function prEl(id) { return document.getElementById(id); }
+function prEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function prOpen(d) {
+  if (pr) prQuit(true);
+  pr = { id: d.id, max: Math.max(30, Math.min(600, Number(d.max) || 300)), stream: null, rec: null, chunks: [],
+         blob: null, mime: '', sec: 0, t0: 0, tick: 0, ac: null, an: null, audio: null, wake: null };
+  prEl('pr-t').textContent = '🎹 ' + String(d.title || '').slice(0, 40);
+  var sc = /^https:\/\/drive\.google\.com\//.test(d.score || '') ? d.score : '';
+  prEl('pr-sc').innerHTML = sc ? '<img src="' + prEsc(sc) + '" alt="がくふ">' : '<div class="no">🎹</div>';
+  prEl('pr').style.display = 'flex';
+  prIdle('じゅんびが できたら あかい ボタンを おしてね');
+}
+function prSay(msg) { prEl('pr-msg').innerHTML = msg; }
+function prBtns(html) { prEl('pr-bt').innerHTML = html; }
+function prLevel(v) { prEl('pr-lv').firstChild.style.width = Math.round(Math.max(0, Math.min(1, v)) * 100) + '%'; }
+function prIdle(msg) {
+  prEl('pr').classList.remove('on-rec');
+  prLevel(0);
+  prSay(msg);
+  prBtns('<button type="button" class="rec" onclick="prStart()">● ろくおん する</button>');
+}
+function prStart() {
+  if (!pr) return;
+  prBtns('');
+  prSay('マイクを じゅんび しているよ…');
+  var want = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+  navigator.mediaDevices.getUserMedia(want).catch(function () {
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  }).then(function (stream) {
+    if (!pr) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+    pr.stream = stream;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
+        pr.ac = new AC(); pr.an = pr.ac.createAnalyser(); pr.an.fftSize = 512;
+        pr.ac.createMediaStreamSource(stream).connect(pr.an);
+        if (pr.ac.resume) pr.ac.resume();
+      }
+    } catch (e) { pr.an = null; }
+    prCount(3);
+  }).catch(function () {
+    prSay('マイクが つかえなかったよ。<br><span style="font-size:14px;font-weight:600">iPad の「せってい」→「まなびテラス」か「Safari」→ マイク を「きょか」にしてね</span>');
+    prBtns('<button type="button" class="sub" onclick="prQuit()">とじる</button>');
+  });
+}
+function prCount(n) {
+  if (!pr) return;
+  var cd = prEl('pr-cd');
+  if (n <= 0) { cd.style.display = 'none'; prRec(); return; }
+  cd.textContent = n; cd.style.display = 'flex';
+  setTimeout(function () { prCount(n - 1); }, 900);
+}
+function prRec() {
+  if (!pr || !pr.stream) return;
+  var types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+  var mime = '';
+  for (var i = 0; i < types.length; i++) { try { if (MediaRecorder.isTypeSupported(types[i])) { mime = types[i]; break; } } catch (e) {} }
+  try { pr.rec = new MediaRecorder(pr.stream, mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : {}); }
+  catch (e) { try { pr.rec = new MediaRecorder(pr.stream); } catch (x) { prFail('ろくおんが できなかったよ'); return; } }
+  pr.chunks = [];
+  pr.rec.ondataavailable = function (e) { if (e.data && e.data.size) pr.chunks.push(e.data); };
+  pr.rec.onstop = prStopped;
+  pr.rec.start(1000);
+  pr.t0 = Date.now();
+  try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(function (w) { if (pr) pr.wake = w; }).catch(function () {}); } catch (e) {}
+  prEl('pr').classList.add('on-rec');
+  prBtns('<button type="button" class="stop" onclick="prStop()">■ おわり</button>');
+  var buf = pr.an ? new Uint8Array(pr.an.fftSize) : null;
+  pr.tick = setInterval(function () {
+    if (!pr) return;
+    var s = Math.floor((Date.now() - pr.t0) / 1000);
+    prSay('<span class="dot"></span>ろくおん ちゅう　<span class="tm">' + Math.floor(s / 60) + ':' + ('0' + s % 60).slice(-2) + '</span>');
+    if (buf) {
+      pr.an.getByteTimeDomainData(buf);
+      var m = 0;
+      for (var i = 0; i < buf.length; i++) m = Math.max(m, Math.abs(buf[i] - 128));
+      prLevel(m / 90);
+    }
+    if (s >= pr.max) prStop();
+  }, 100);
+}
+function prStop() {
+  if (!pr || !pr.rec || pr.rec.state === 'inactive') return;
+  pr.sec = Math.round((Date.now() - pr.t0) / 1000);
+  clearInterval(pr.tick);
+  prBtns('');
+  try { pr.rec.stop(); } catch (e) { prStopped(); }
+}
+function prMicOff() {
+  if (!pr) return;
+  if (pr.stream) pr.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+  pr.stream = null;
+  if (pr.ac) try { pr.ac.close(); } catch (e) {}
+  pr.ac = null; pr.an = null;
+  if (pr.wake) try { pr.wake.release(); } catch (e) {}
+  pr.wake = null;
+}
+function prStopped() {
+  if (!pr) return;
+  prMicOff();
+  prEl('pr').classList.remove('on-rec');
+  prLevel(0);
+  pr.mime = (pr.rec && pr.rec.mimeType) || (pr.chunks[0] && pr.chunks[0].type) || 'audio/mp4';
+  pr.blob = new Blob(pr.chunks, { type: pr.mime });
+  pr.chunks = [];
+  if (!pr.blob.size || pr.sec < 1) { prIdle('みじかすぎたよ。もういちど ろくおん してね'); return; }
+  prSay('おわり！ ' + prLen(pr.sec) + '　きいてみる？');
+  prBtns('<button type="button" class="sub" onclick="prListen()" id="pr-l">▶ きいてみる</button>' +
+         '<button type="button" class="sub" onclick="prAgain()">↺ もういちど</button>' +
+         '<button type="button" class="ok" onclick="prKeep()">✓ のこす</button>');
+}
+function prLen(s) { return s < 60 ? s + 'びょう' : Math.floor(s / 60) + 'ふん' + (s % 60 ? ' ' + s % 60 + 'びょう' : ''); }
+function prListen() {
+  if (!pr || !pr.blob) return;
+  if (pr.audio && !pr.audio.paused) { pr.audio.pause(); prEl('pr-l').textContent = '▶ きいてみる'; return; }
+  if (!pr.audio) {
+    pr.audio = new Audio(URL.createObjectURL(pr.blob));
+    pr.audio.onended = function () { var b = prEl('pr-l'); if (b) b.textContent = '▶ きいてみる'; };
+  }
+  pr.audio.currentTime = 0;
+  var p = pr.audio.play(); if (p && p.catch) p.catch(function () {});
+  prEl('pr-l').textContent = '■ とめる';
+}
+function prAudioOff() {
+  if (pr && pr.audio) { try { pr.audio.pause(); URL.revokeObjectURL(pr.audio.src); } catch (e) {} pr.audio = null; }
+}
+function prAgain() { prAudioOff(); if (pr) pr.blob = null; prIdle('じゅんびが できたら あかい ボタンを おしてね'); }
+function prKeep() {
+  if (!pr || !pr.blob) return;
+  prAudioOff();
+  prBtns('');
+  prSay('のこしているよ…');
+  var id = pr.id, sec = pr.sec, mime = pr.mime;
+  var fr = new FileReader();
+  fr.onload = function () {
+    var data = String(fr.result || '').replace(/^data:[^,]*,/, '');
+    toInner({ jp: 'pianoRecDone', id: id, data: data, mime: mime, sec: sec });
+    prClose();
+  };
+  fr.onerror = function () { prFail('ろくおんを よみこめなかったよ'); };
+  fr.readAsDataURL(pr.blob);
+}
+function prFail(msg) {
+  prMicOff();
+  if (pr) toInner({ jp: 'pianoRecErr', id: pr.id, error: msg });
+  prSay(msg);
+  prBtns('<button type="button" class="sub" onclick="prQuit(true)">とじる</button>');
+}
+function prQuit(silent) {
+  if (!pr) { prClose(); return; }
+  var had = pr.blob || (pr.rec && pr.rec.state === 'recording');
+  if (!silent && had && !window.confirm('ろくおんを けして やめる？')) return;
+  if (pr.rec && pr.rec.state !== 'inactive') { pr.rec.onstop = null; try { pr.rec.stop(); } catch (e) {} }
+  clearInterval(pr.tick);
+  prMicOff(); prAudioOff();
+  toInner({ jp: 'pianoRecCancel', id: pr.id });
+  prClose();
+}
+function prClose() {
+  if (pr) { clearInterval(pr.tick); prMicOff(); prAudioOff(); }
+  pr = null;
+  prEl('pr').style.display = 'none';
+  prEl('pr-cd').style.display = 'none';
+}
+prEl('pr-x').onclick = function () { prQuit(false); };
 
 frame.src = APP + '?wrap=1';
 // ⚠ 直接ひらく道（?direct=1）は、入口へ戻す案内を出さない。以前は20秒で「こちらから開いて」を出しており、
